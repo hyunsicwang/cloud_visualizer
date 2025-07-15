@@ -2,8 +2,8 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 import io
-import mysql.connector
-from mysql.connector import Error
+import psycopg2
+from psycopg2 import Error
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 import subprocess
@@ -12,11 +12,11 @@ import xml.etree.ElementTree as ET
 import base64
 import urllib.parse
 import requests
-import subprocess
-import re
-import xml.etree.ElementTree as ET
-import base64
-import urllib.parse
+import os
+from dotenv import load_dotenv
+
+# 환경변수 로드
+load_dotenv()
 
 # 페이지 설정
 st.set_page_config(
@@ -126,12 +126,12 @@ menu = st.session_state.current_page
 # 데이터베이스 연결 함수
 def get_db_connection():
     try:
-        connection = mysql.connector.connect(
-            host='localhost',
-            port=3306,
-            database='cloud_visualizer',
-            user='hs_admin',
-            password='qhdks25!@'
+        connection = psycopg2.connect(
+            host=os.getenv('DB_HOST', 'aws-0-ap-northeast-2.pooler.supabase.com'),
+            port=os.getenv('DB_PORT', '5432'),
+            database=os.getenv('DB_NAME', 'postgres'),
+            user=os.getenv('DB_USER', 'postgres.djbeuniqyujykksekysv'),
+            password=os.getenv('DB_PASSWORD', 'gustlr25!@')
         )
         return connection
     except Error as e:
@@ -146,7 +146,7 @@ def create_projects_table():
             cursor = connection.cursor()
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS project (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    id SERIAL PRIMARY KEY,
                     project_name VARCHAR(255) NOT NULL,
                     account_id VARCHAR(255) NOT NULL,
                     region VARCHAR(100) NOT NULL,
@@ -186,9 +186,11 @@ def get_projects_from_db():
     projects = []
     if connection:
         try:
-            cursor = connection.cursor(dictionary=True)
+            cursor = connection.cursor()
             cursor.execute("SELECT * FROM project ORDER BY created_at DESC")
-            projects = cursor.fetchall()
+            columns = [desc[0] for desc in cursor.description]
+            rows = cursor.fetchall()
+            projects = [dict(zip(columns, row)) for row in rows]
             # access_key 마스킹 처리
             for project in projects:
                 project['access_key'] = project['access_key'][:8] + "..."
@@ -198,6 +200,44 @@ def get_projects_from_db():
         finally:
             connection.close()
     return projects
+
+# 프로젝트 수정
+def update_project_in_db(project_id, project_name, account_id, region, access_key, secret_key):
+    connection = get_db_connection()
+    if connection:
+        try:
+            cursor = connection.cursor()
+            cursor.execute("""
+                UPDATE project 
+                SET project_name = %s, account_id = %s, region = %s, access_key = %s, secret_key = %s
+                WHERE id = %s
+            """, (project_name, account_id, region, access_key, secret_key, project_id))
+            connection.commit()
+            return True
+        except Error as e:
+            st.error(f"프로젝트 수정 오류: {e}")
+            return False
+        finally:
+            connection.close()
+    return False
+
+# 프로젝트 원본 정보 조회 (마스킹 없이)
+def get_project_original_info(project_id):
+    connection = get_db_connection()
+    project_info = None
+    if connection:
+        try:
+            cursor = connection.cursor()
+            cursor.execute("SELECT * FROM project WHERE id = %s", (project_id,))
+            row = cursor.fetchone()
+            if row:
+                columns = [desc[0] for desc in cursor.description]
+                project_info = dict(zip(columns, row))
+        except Error as e:
+            st.error(f"프로젝트 정보 조회 오류: {e}")
+        finally:
+            connection.close()
+    return project_info
 
 # 프로젝트 삭제
 def delete_project_from_db(project_id):
@@ -237,9 +277,12 @@ def get_project_info(project_name):
     project_info = None
     if connection:
         try:
-            cursor = connection.cursor(dictionary=True)
+            cursor = connection.cursor()
             cursor.execute("SELECT * FROM project WHERE project_name = %s", (project_name,))
-            project_info = cursor.fetchone()
+            row = cursor.fetchone()
+            if row:
+                columns = [desc[0] for desc in cursor.description]
+                project_info = dict(zip(columns, row))
         except Error as e:
             st.error(f"프로젝트 정보 조회 오류: {e}")
         finally:
@@ -860,9 +903,12 @@ def get_full_aws_resources(project_name):
     connection = get_db_connection()
     if connection:
         try:
-            cursor = connection.cursor(dictionary=True)
+            cursor = connection.cursor()
             cursor.execute("SELECT * FROM project WHERE project_name = %s", (project_name,))
-            project_info = cursor.fetchone()
+            row = cursor.fetchone()
+            if row:
+                columns = [desc[0] for desc in cursor.description]
+                project_info = dict(zip(columns, row))
         except Error as e:
             st.error(f"프로젝트 정보 조회 오류: {e}")
             return {}
@@ -1096,6 +1142,12 @@ def project_page():
     if 'show_add_modal' not in st.session_state:
         st.session_state.show_add_modal = False
     
+    if 'show_edit_modal' not in st.session_state:
+        st.session_state.show_edit_modal = False
+        
+    if 'edit_project_id' not in st.session_state:
+        st.session_state.edit_project_id = None
+    
     if 'selected_project' not in st.session_state:
         st.session_state.selected_project = None
     
@@ -1142,6 +1194,45 @@ def project_page():
                     st.session_state.show_add_modal = False
                     st.rerun()
     
+    # 프로젝트 수정 모달
+    if st.session_state.show_edit_modal and st.session_state.edit_project_id:
+        project_info = get_project_original_info(st.session_state.edit_project_id)
+        if project_info:
+            with st.container():
+                st.markdown("### 프로젝트 수정")
+                
+                with st.form("edit_project_form"):
+                    edit_project_name = st.text_input("프로젝트 명", value=project_info['project_name'])
+                    edit_account_id = st.text_input("Account ID", value=project_info['account_id'])
+                    regions = ["us-east-1", "us-east-2", "us-west-1", "us-west-2", "ap-northeast-1", "ap-northeast-2", "ap-southeast-1", "ap-southeast-2", "eu-west-1", "eu-west-2", "eu-central-1"]
+                    region_index = regions.index(project_info['region']) if project_info['region'] in regions else 0
+                    edit_region = st.selectbox("리전", regions, index=region_index)
+                    edit_access_key = st.text_input("Access Key", value=project_info['access_key'], type="password")
+                    edit_secret_key = st.text_input("Secret Key", value=project_info['secret_key'], type="password")
+                    
+                    col1, col2, col3 = st.columns([1, 1, 2])
+                    with col1:
+                        edit_submitted = st.form_submit_button("수정", type="primary")
+                    with col2:
+                        edit_cancelled = st.form_submit_button("취소")
+                    
+                    if edit_submitted:
+                        if edit_project_name and edit_account_id and edit_region and edit_access_key and edit_secret_key:
+                            if update_project_in_db(st.session_state.edit_project_id, edit_project_name, edit_account_id, edit_region, edit_access_key, edit_secret_key):
+                                st.session_state.show_edit_modal = False
+                                st.session_state.edit_project_id = None
+                                st.success(f"프로젝트 '{edit_project_name}'이(가) 수정되었습니다!")
+                                st.rerun()
+                            else:
+                                st.error("프로젝트 수정에 실패했습니다.")
+                        else:
+                            st.error("모든 필드를 입력해주세요.")
+                    
+                    if edit_cancelled:
+                        st.session_state.show_edit_modal = False
+                        st.session_state.edit_project_id = None
+                        st.rerun()
+    
     # 프로젝트 목록
     st.markdown("### 프로젝트 목록")
     projects = get_projects_from_db()
@@ -1160,7 +1251,7 @@ def project_page():
                     st.write(f"**Access Key:** {project['access_key']}")
                     st.write(f"**Secret Key:** {project['secret_key']}")
                 with col3:
-                    col3_1, col3_2, col3_3, col3_4 = st.columns(4)
+                    col3_1, col3_2, col3_3, col3_4, col3_5 = st.columns(5)
                     with col3_1:
                         if st.button(f"🗺️ 구성도", key=f"diagram_{project['id']}"):
                             st.session_state.selected_project = project['project_name']
@@ -1178,6 +1269,11 @@ def project_page():
                             st.session_state.current_page = "워크로드"
                             st.rerun()
                     with col3_4:
+                        if st.button(f"✏️ 수정", key=f"edit_{project['id']}"):
+                            st.session_state.show_edit_modal = True
+                            st.session_state.edit_project_id = project['id']
+                            st.rerun()
+                    with col3_5:
                         if st.button(f"🗑️ 삭제", key=f"delete_{project['id']}"):
                             if delete_project_from_db(project['id']):
                                 st.success("프로젝트가 삭제되었습니다.")
@@ -1276,9 +1372,12 @@ def workload_page():
                     connection = get_db_connection()
                     if connection:
                         try:
-                            cursor = connection.cursor(dictionary=True)
+                            cursor = connection.cursor()
                             cursor.execute("SELECT * FROM project WHERE project_name = %s", (selected_project,))
-                            project_info = cursor.fetchone()
+                            row = cursor.fetchone()
+                            if row:
+                                columns = [desc[0] for desc in cursor.description]
+                                project_info = dict(zip(columns, row))
                         except Error as e:
                             st.error(f"프로젝트 정보 조회 오류: {e}")
                         finally:
