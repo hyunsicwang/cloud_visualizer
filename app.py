@@ -6,10 +6,7 @@ import psycopg2
 from psycopg2 import Error
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
-import subprocess
 import re
-import xml.etree.ElementTree as ET
-import base64
 import urllib.parse
 import requests
 import os
@@ -388,76 +385,76 @@ def get_elb_details(session):
     try:
         elb = session.client('elbv2')
         elb_classic = session.client('elb')
-        
-        # ALB/NLB 조회
-        response = elb.describe_load_balancers()
         elb_details = []
         
-        for lb in response['LoadBalancers']:
-            lb_arn = lb['LoadBalancerArn']
-            lb_name = lb['LoadBalancerName']
-            lb_type = lb['Type']
-            lb_scheme = lb['Scheme']
-            
-            # 리스너 조회
-            listeners = elb.describe_listeners(LoadBalancerArn=lb_arn)['Listeners']
-            
-            for listener in listeners:
-                listener_port = listener['Port']
-                listener_protocol = listener['Protocol']
+        # ALB/NLB 조회
+        try:
+            response = elb.describe_load_balancers()
+            for lb in response['LoadBalancers']:
+                lb_arn = lb['LoadBalancerArn']
+                lb_name = lb['LoadBalancerName']
+                lb_type = lb['Type']
+                lb_scheme = lb['Scheme']
                 
-                # 대상 그룹 조회
-                for action in listener.get('DefaultActions', []):
-                    if action['Type'] == 'forward':
-                        if 'TargetGroupArn' in action:
-                            tg_arn = action['TargetGroupArn']
-                        elif 'ForwardConfig' in action:
-                            tg_arn = action['ForwardConfig']['TargetGroups'][0]['TargetGroupArn']
-                        else:
-                            continue
+                # 리스너 조회
+                listeners_info = []
+                target_groups_info = []
+                all_ec2_instances = set()
+                
+                try:
+                    listeners = elb.describe_listeners(LoadBalancerArn=lb_arn)['Listeners']
+                    for listener in listeners:
+                        listener_port = listener['Port']
+                        listener_protocol = listener['Protocol']
+                        listeners_info.append(f"{listener_protocol}:{listener_port}")
                         
-                        # 대상 그룹 상세 정보
-                        tg_info = elb.describe_target_groups(TargetGroupArns=[tg_arn])['TargetGroups'][0]
-                        tg_name = tg_info['TargetGroupName']
-                        tg_port = tg_info['Port']
-                        health_check = tg_info['HealthCheckPath'] if 'HealthCheckPath' in tg_info else 'N/A'
-                        
-                        # 대상 상태 확인 및 EC2 인스턴스 정보 수집
-                        target_health = elb.describe_target_health(TargetGroupArn=tg_arn)
-                        healthy_count = sum(1 for t in target_health['TargetHealthDescriptions'] if t['TargetHealth']['State'] == 'healthy')
-                        total_count = len(target_health['TargetHealthDescriptions'])
-                        health_status = f"{healthy_count}/{total_count} Healthy"
-                        
-                        # EC2 인스턴스 정보 수집
-                        ec2_instances = []
-                        ec2_client = session.client('ec2')
-                        
-                        for target in target_health['TargetHealthDescriptions']:
-                            if target['Target']['Id'].startswith('i-'):  # EC2 인스턴스인 경우
-                                instance_id = target['Target']['Id']
-                                try:
-                                    # EC2 인스턴스 정보 조회
-                                    ec2_response = ec2_client.describe_instances(InstanceIds=[instance_id])
-                                    for reservation in ec2_response['Reservations']:
-                                        for instance in reservation['Instances']:
-                                            instance_name = next((tag['Value'] for tag in instance.get('Tags', []) if tag['Key'] == 'Name'), 'N/A')
-                                            ec2_instances.append(f"{instance_name} ({instance_id})")
-                                except:
-                                    ec2_instances.append(f"Unknown ({instance_id})")
-                        
-                        ec2_list = ', '.join(ec2_instances) if ec2_instances else 'No EC2 Instances'
-                        
-                        elb_details.append({
-                            'ELB Name': lb_name,
-                            'Type': lb_type,
-                            'Scheme': lb_scheme,
-                            'Listener': f"{listener_protocol}:{listener_port}",
-                            'Target Group': tg_name,
-                            'Port': tg_port,
-                            'Health Check': health_check,
-                            'Health Status': health_status,
-                            'EC2 Instances': ec2_list
-                        })
+                        # 대상 그룹 조회
+                        for action in listener.get('DefaultActions', []):
+                            if action['Type'] == 'forward':
+                                tg_arn = None
+                                if 'TargetGroupArn' in action:
+                                    tg_arn = action['TargetGroupArn']
+                                elif 'ForwardConfig' in action and action['ForwardConfig'].get('TargetGroups'):
+                                    tg_arn = action['ForwardConfig']['TargetGroups'][0]['TargetGroupArn']
+                                
+                                if tg_arn:
+                                    try:
+                                        # 대상 그룹 상세 정보
+                                        tg_info = elb.describe_target_groups(TargetGroupArns=[tg_arn])['TargetGroups'][0]
+                                        tg_name = tg_info['TargetGroupName']
+                                        target_groups_info.append(tg_name)
+                                        
+                                        # 대상 상태 확인 및 EC2 인스턴스 정보 수집
+                                        target_health = elb.describe_target_health(TargetGroupArn=tg_arn)
+                                        ec2_client = session.client('ec2')
+                                        
+                                        for target in target_health['TargetHealthDescriptions']:
+                                            if target['Target']['Id'].startswith('i-'):
+                                                instance_id = target['Target']['Id']
+                                                try:
+                                                    ec2_response = ec2_client.describe_instances(InstanceIds=[instance_id])
+                                                    for reservation in ec2_response['Reservations']:
+                                                        for instance in reservation['Instances']:
+                                                            instance_name = next((tag['Value'] for tag in instance.get('Tags', []) if tag['Key'] == 'Name'), 'N/A')
+                                                            all_ec2_instances.add(f"{instance_name} ({instance_id})")
+                                                except:
+                                                    all_ec2_instances.add(f"Unknown ({instance_id})")
+                                    except Exception as tg_error:
+                                        continue
+                except Exception as listener_error:
+                    listeners_info = ['N/A']
+                
+                # ELB별로 하나의 행만 생성
+                elb_details.append({
+                    'ELB Name': lb_name,
+                    'Type': lb_type,
+                    'Scheme': lb_scheme,
+                    'Listeners': ', '.join(listeners_info) if listeners_info else 'N/A',
+                    'Target Groups': ', '.join(list(set(target_groups_info))) if target_groups_info else 'N/A',
+                    'EC2 Instances': ', '.join(sorted(all_ec2_instances)) if all_ec2_instances else 'No EC2 Instances'
+                })
+        except Exception as alb_error:
+            pass
         
         # CLB 조회
         try:
@@ -466,19 +463,18 @@ def get_elb_details(session):
                 clb_name = clb['LoadBalancerName']
                 clb_scheme = clb['Scheme']
                 
+                # 리스너 정보 수집
+                listeners_info = []
                 for listener in clb['ListenerDescriptions']:
                     listener_info = listener['Listener']
                     protocol = listener_info['Protocol']
                     port = listener_info['LoadBalancerPort']
-                    
-                    # CLB는 대상 그룹 대신 인스턴스 직접 연결
+                    listeners_info.append(f"{protocol}:{port}")
+                
+                # CLB에 연결된 EC2 인스턴스 정보
+                ec2_instances = set()
+                try:
                     instance_health = elb_classic.describe_instance_health(LoadBalancerName=clb_name)
-                    healthy_count = sum(1 for i in instance_health['InstanceStates'] if i['State'] == 'InService')
-                    total_count = len(instance_health['InstanceStates'])
-                    health_status = f"{healthy_count}/{total_count} InService"
-                    
-                    # CLB에 연결된 EC2 인스턴스 정보
-                    ec2_instances = []
                     ec2_client = session.client('ec2')
                     
                     for instance_state in instance_health['InstanceStates']:
@@ -488,25 +484,22 @@ def get_elb_details(session):
                             for reservation in ec2_response['Reservations']:
                                 for instance in reservation['Instances']:
                                     instance_name = next((tag['Value'] for tag in instance.get('Tags', []) if tag['Key'] == 'Name'), 'N/A')
-                                    ec2_instances.append(f"{instance_name} ({instance_id})")
+                                    ec2_instances.add(f"{instance_name} ({instance_id})")
                         except:
-                            ec2_instances.append(f"Unknown ({instance_id})")
-                    
-                    ec2_list = ', '.join(ec2_instances) if ec2_instances else 'No EC2 Instances'
-                    
-                    elb_details.append({
-                        'ELB Name': clb_name,
-                        'Type': 'classic',
-                        'Scheme': clb_scheme,
-                        'Listener': f"{protocol}:{port}",
-                        'Target Group': 'Direct Instance',
-                        'Port': 'N/A',
-                        'Health Check': 'Instance Health',
-                        'Health Status': health_status,
-                        'EC2 Instances': ec2_list
-                    })
-        except:
-            pass  # CLB가 없을 수 있음
+                            ec2_instances.add(f"Unknown ({instance_id})")
+                except:
+                    pass
+                
+                elb_details.append({
+                    'ELB Name': clb_name,
+                    'Type': 'classic',
+                    'Scheme': clb_scheme,
+                    'Listeners': ', '.join(listeners_info) if listeners_info else 'N/A',
+                    'Target Groups': 'Direct Instance',
+                    'EC2 Instances': ', '.join(sorted(ec2_instances)) if ec2_instances else 'No EC2 Instances'
+                })
+        except Exception as clb_error:
+            pass
         
         return pd.DataFrame(elb_details)
         
@@ -948,129 +941,10 @@ def get_full_aws_resources(project_name):
     
     return resources
 
-# Q Developer CLI 호출 함수
-def call_q_developer_cli(project_info):
-    try:
-        # Q Developer 서버에 HTTP POST 요청
-        response = requests.post(
-            "http://3.39.13.99:8005/chat",
-            json={
-                "access_key": project_info['access_key'],
-                "secret_key": project_info['secret_key'],
-                "region": project_info['region'],
-                "account_id": project_info['account_id'],
-                "prompt": "VPC, Subnet, Internet Gateway, NAT Gateway, VPN Gateway, Transit Gateway, VPC Peering, EC2, RDS, S3, ELB, ElastiCache, CloudFront, EFS, AWS WAF, ACM 등 모든 AWS 네트워크 및 서비스를 조회해서 구성도를 drawio(XML)형식으로 받아와줘"
-            },
-            timeout=1800
-        )
-        
-        if response.status_code == 200:
-            result = response.text
-            # XML 코드만 추출
-            xml_match = re.search(r'<mxfile[^>]*>.*?</mxfile>', result, re.DOTALL)
-            if xml_match:
-                return xml_match.group(0)
-            else:
-                # 다른 XML 패턴 시도
-                xml_match = re.search(r'<\?xml.*?</.*?>', result, re.DOTALL)
-                if xml_match:
-                    return xml_match.group(0)
-                else:
-                    st.error("XML 코드를 찾을 수 없습니다.")
-                    return None
-        else:
-            st.error(f"Q Developer 서버 오류: {response.status_code}")
-            return None
-            
-    except Exception as e:
-        st.error(f"Q Developer CLI 호출 오류: {e}")
-        return None
 
-# 기본 3-tier 구조 샘플 XML
-def get_default_3tier_xml():
-    return """
-<mxfile host="embed.diagrams.net" modified="2024-01-01T00:00:00.000Z" agent="5.0" version="22.1.16" etag="sample" type="embed">
-  <diagram name="3-Tier Architecture" id="sample-diagram">
-    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
-      <root>
-        <mxCell id="0" />
-        <mxCell id="1" parent="0" />
-        
-        <!-- Presentation Tier -->
-        <mxCell id="2" value="Presentation Tier" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=16;fontStyle=1" vertex="1" parent="1">
-          <mxGeometry x="50" y="50" width="200" height="80" as="geometry" />
-        </mxCell>
-        
-        <!-- Web Server -->
-        <mxCell id="3" value="Web Server\n(Apache/Nginx)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6" vertex="1" parent="1">
-          <mxGeometry x="300" y="50" width="120" height="80" as="geometry" />
-        </mxCell>
-        
-        <!-- Application Tier -->
-        <mxCell id="4" value="Application Tier" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=16;fontStyle=1" vertex="1" parent="1">
-          <mxGeometry x="50" y="200" width="200" height="80" as="geometry" />
-        </mxCell>
-        
-        <!-- App Server -->
-        <mxCell id="5" value="Application Server\n(Tomcat/Node.js)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00" vertex="1" parent="1">
-          <mxGeometry x="300" y="200" width="120" height="80" as="geometry" />
-        </mxCell>
-        
-        <!-- Data Tier -->
-        <mxCell id="6" value="Data Tier" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=16;fontStyle=1" vertex="1" parent="1">
-          <mxGeometry x="50" y="350" width="200" height="80" as="geometry" />
-        </mxCell>
-        
-        <!-- Database -->
-        <mxCell id="7" value="Database\n(MySQL/PostgreSQL)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffcccc;strokeColor=#cc0000" vertex="1" parent="1">
-          <mxGeometry x="300" y="350" width="120" height="80" as="geometry" />
-        </mxCell>
-        
-        <!-- Connections -->
-        <mxCell id="8" value="" style="endArrow=classic;html=1;rounded=0;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0" edge="1" parent="1" source="2" target="3">
-          <mxGeometry width="50" height="50" relative="1" as="geometry">
-            <mxPoint x="390" y="240" as="sourcePoint" />
-            <mxPoint x="440" y="190" as="targetPoint" />
-          </mxGeometry>
-        </mxCell>
-        
-        <mxCell id="9" value="" style="endArrow=classic;html=1;rounded=0;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0" edge="1" parent="1" source="3" target="5">
-          <mxGeometry width="50" height="50" relative="1" as="geometry">
-            <mxPoint x="390" y="240" as="sourcePoint" />
-            <mxPoint x="440" y="190" as="targetPoint" />
-          </mxGeometry>
-        </mxCell>
-        
-        <mxCell id="10" value="" style="endArrow=classic;html=1;rounded=0;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0" edge="1" parent="1" source="4" target="5">
-          <mxGeometry width="50" height="50" relative="1" as="geometry">
-            <mxPoint x="390" y="240" as="sourcePoint" />
-            <mxPoint x="440" y="190" as="targetPoint" />
-          </mxGeometry>
-        </mxCell>
-        
-        <mxCell id="11" value="" style="endArrow=classic;html=1;rounded=0;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0" edge="1" parent="1" source="5" target="7">
-          <mxGeometry width="50" height="50" relative="1" as="geometry">
-            <mxPoint x="390" y="240" as="sourcePoint" />
-            <mxPoint x="440" y="190" as="targetPoint" />
-          </mxGeometry>
-        </mxCell>
-        
-        <mxCell id="12" value="" style="endArrow=classic;html=1;rounded=0;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0" edge="1" parent="1" source="6" target="7">
-          <mxGeometry width="50" height="50" relative="1" as="geometry">
-            <mxPoint x="390" y="240" as="sourcePoint" />
-            <mxPoint x="440" y="190" as="targetPoint" />
-          </mxGeometry>
-        </mxCell>
-        
-      </root>
-    </mxGraphModel>
-  </diagram>
-</mxfile>
-    """
 
 # Draw.io XML을 iframe에 로드하는 함수
 def load_drawio_with_xml(xml_content):
-    
     if xml_content:
         # XML을 URL 인코딩
         encoded_xml = urllib.parse.quote(xml_content)
@@ -1086,13 +960,7 @@ def load_drawio_with_xml(xml_content):
         """
         return iframe_html
     else:
-        # 기본 3-tier 구조 샘플 표시
-        default_xml = get_default_3tier_xml()
-        encoded_xml = urllib.parse.quote(default_xml)
-        return f"""
-<iframe frameborder="0" style="width:100%;height:863px;" src="https://viewer.diagrams.net/?tags=%7B%7D&lightbox=1&highlight=0000ff&edit=_blank&layers=1&nav=1&title=AWS_Architecture_250702.drawio#R%3Cmxfile%3E%3Cdiagram%20name%3D%22%ED%8E%98%EC%9D%B4%EC%A7%80-1%22%20id%3D%22QYOAMgD-o3gvjw3hr5vE%22%3E7VxZc9o6FP41foSx5f3RbGnvpB1u02l7%2B8IIUECNsRhZkNBffyUsgy2ZJQ1bW2cZrGNZOpa%2B7%2BgcLRh2e%2FZyR%2BF8%2BoGMUWwAc%2Fxi2B0DACuwAv4hJCspsU0%2Fk0woHkvZVvCAfyIpNKV0gccoLWVkhMQMz8vCEUkSNGIlGaSUPJezPZK4XOscTmSN5lbwMIIx0rJ9xWM2zaQB8LfydwhPpnnNlhdmd2YwzywLTqdwTJ4LIrtr2G1KCMuuZi9tFIvWy9sle6634%2B7wH4C%2FrV6%2BP0b9T2TV8DrO%2FFMD2FldSxgv5At86bdl%2FWyVv1SuO0UJ%2B%2BW6bEur6x3vAdK4%2B6pVmD4hNhLNYRp2iyxYjBPU3vSYEE4oHGOuTpvEhHJZQhL%2BbGvKZjFPWfzyeYoZepjDkSjzmcONyx5JwiRmLJCnZbWiVN7mc3E9e5kIfDbhc%2Bo0J5Qs5usq33PUVN4dLOcj8Tij5AnlKhnADvzQCj1REY5jRdUlogxz4EQxnohSGRGVQJmK0SMTJXL9cTK5X6c6til1rqpiDNMpGssX4YoyyBuNysbQe3A%2FHrhu6KWAaNnPd4jMEKMrnkXebVg58yRjc%2Fg%2BF9EvZdMC8n1XCqFk3GRT9hZZ%2FEKC6xVAywsu4AmNOUllklA2JROSwLi7lbZ4LybjTfNt89wT0S3rNvyBGFtJ9MAFI2W4HdnCOQuERnvbl6IYMrwsm5WqtpKP9gnmFW%2F6xQFuqVussOnbHghM4JrAB4HtlEtMyYKOkCxE6YCNVr%2FeJ76rkT%2F6%2BsAFLTh64uzaawDmQqu1nm6L%2F%2FHubWf%2FLs%2FaFpKmeFtNWCXzdaGlZ%2BMfVlUNqrBK5utCS88mUrnWZWGVzHd1jdWnrYqnLeVp%2FrfDnipWhf%2F2RPeWDBeX%2B1HEh6wqU%2Fe4%2FlHtUG7k7uEQxX2SYobXJnRIGCOzg1ZwxMkkbFiRaIdsOEzn2Ws94hehR7VRpyhDfGbSWzxZZdyHGTpfze7j7efGDEqeBrr5dCus59mMZ%2B6OFIj6lZBk8gMnR5AU0e4SZVy1spbPXBhTxUWhP8tIkoOjAjvXFL9cHis42gDkF4FWyQUNfSqCyOMjHqHmIkU0bZJkMKdohlOUDoTkrKMtUOACQh0vTliBl%2FBMePHNaq%2BuBsvtgcW1rg0WcMOeWd7A5%2FbMLBA2y74Z91ibwCz8OO5FnTOgR2bREmJOHxxjJl75uyDaWaJCzz%2Bm7oYek1ZEVJpPYjl%2BtxUVzYm1k9yqG6E4RJuiqsLKAtiKgZcoZkaWcLgu1MrcDPyzmCYMskJ6jGJUTKMxLiZjMnoqhnjCDBVuHwv0VzspNigbEsvUDclmJCpaEu98fkpwFG6iGjdXxE3DuTncAD0QfVgME8TOY96Ap1XXXwxjPOKyBv%2FX8VkZ7GqBrhrkagFuObjVAkc1aNQCxnLoqkW3agisxcnlUFqLZtWQV4uL9war55n8U%2BfMVCc1yxPHcJ7i4eYpikYLmnJ34JPg6JsnElNRHDdgg23mh7V5ygtWbdUmIle84B7oed3gdPOMwAkCy1Fd82NNh%2Ftq02ErpsOuMB1%2BhemwvLOZDt1V6VO8hAzVRK6J%2FGYim2bkRBVE7no9r%2Befjsi6c3NRItvOsUT2z0Zk3XfcErnTqtlcs7lm8y42WyU2u3Z4bTZ7YL%2BLrU8d1FyuuVy72MBWuHwDLran70fZjsw1kWsi14PyEUS%2BARfbcw652DWbazbXbK5ks7Jqe30X29Zd7I%2BIPRP6dJJJcifQbMEFloW5xnT1TTzPWSiT%2F8ni1onOSym1Kqb6iGLetpvlmiPRkDfkudeYQQBKGAJ22AzD0LGtwLbM0Mn9rAMLzFq5bnnh2jEVxDFIJ4hp5USUwlUhm7T0R6tvq6jar5aSnV9kCpx00TzfOHGTexl%2Bd5xZ3m0CTdXrIkhzrRppWst7RyLiZJ0A6jHqtD2qGG03DC%2Faob5Xs0q3f9J8m55re2YYKAWeeR9acBWOvbJLsjbYByy5TJzhd1%2FG4NSd%2FLbNmfryttYdlTHpuTf8V0SUdnMdoIptO1r41wEdHsftjpVf2d%2FHB27KbttGxdZsf7P1s3QUaiM9eacG9h9BqeBYSoW3RSl9ofl9jltg3kGGnuFK66DDhx93HdbZgXiFIEHb6fV62oyKzHxzx3d2nBXQJ5lykzCYyIY9I9eB65fJXrG1%2FqLndnLkF6DW%2FfaZC6L7Vo2wEyEMzucx10WoOIgJHA%2BGMIbJ6DXHON4ONatiXLko1PIjapVHxMwv%2FY%2F78Vaf5ryZ05w7ePqnnubk%2BqIBI4P153KenJO1DUvd93Z12uqnfD5Gn2s%2F5OSjRAIv4oIEZtM0bcv1g9DxbS8Ib2yUcK4ReWwnzErTZdvZszNOmB0MY%2FKz1QfDmHyEvZEwxsmxWQxjUiY8H72JfmH9z9XDJKPbNsKWEbjiIgiMMIjeN%2BYkZROKHv69rz2M38TDaIfArTi4%2Fad6GHScHm83nFebfEs5T%2BdVnKe7qJF39ajT6EZGyzdagdFtGZFttELJ5ShYX3hGy2l8gBTDzoHAtKZxTeM%2FksbqBp985etq3%2FmiB%2FR9Om7oY3AD4pqyvwllux1fHLf%2BWyiLRuCSI69z7ZHX06P5jLOHR9%2BawjWF%2F0IK2xdjME9uv6Y12xyx%2FbZbu%2Fs%2F%3C%2Fdiagram%3E%3C%2Fmxfile%3E">
-</iframe>
-        """
+        return "<p>구성도를 생성할 수 없습니다.</p>"
 
 # 앱 시작 시 테이블 생성
 create_projects_table()
