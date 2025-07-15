@@ -1,0 +1,15 @@
+digraph "투썸-Nest AWS Architecture" {
+	graph [fontcolor="#2D3436" fontname="Sans-Serif" fontsize=15 label="투썸-Nest AWS Architecture" nodesep=0.60 pad=2.0 rankdir=TB ranksep=0.75 splines=ortho]
+	node [fixedsize=true fontcolor="#2D3436" fontname="Sans-Serif" fontsize=13 height=1.4 imagescale=true labelloc=b shape=box style=rounded width=1.4]
+	edge [color="#7B8894"]
+	"69f7dd9ad1804670be3e4b1e076a30e2" [label="EC2 (5)" height=1.9 image="C:\Users\Admin\AppData\Roaming\Python\Python313\site-packages\resources/aws/compute\ec2.png" shape=none]
+	c823bad875c54134980a32dc443c20db [label="RDS (1)" height=1.9 image="C:\Users\Admin\AppData\Roaming\Python\Python313\site-packages\resources/aws/database\rds.png" shape=none]
+	b2003622d98040a1b9d1f04645732468 [label="S3 (2)" height=1.9 image="C:\Users\Admin\AppData\Roaming\Python\Python313\site-packages\resources/aws/storage\simple-storage-service-s3.png" shape=none]
+	"7edcb786e9214630857a8dfb43ee0dd9" [label="ELB (2)" height=1.9 image="C:\Users\Admin\AppData\Roaming\Python\Python313\site-packages\resources/aws/network\elastic-load-balancing.png" shape=none]
+	e7d855b75e55458f8310e7b77f2910cd [label="ACM (3)" height=1.9 image="C:\Users\Admin\AppData\Roaming\Python\Python313\site-packages\resources/aws/security\certificate-manager.png" shape=none]
+	"8e395c6b1072496c908b20431f81f7be" [label="WAF (2)" height=1.9 image="C:\Users\Admin\AppData\Roaming\Python\Python313\site-packages\resources/aws/security\waf.png" shape=none]
+	"5a2aeae4ac384c5eb844748a483c80a1" [label="ElastiCache (2)" height=1.9 image="C:\Users\Admin\AppData\Roaming\Python\Python313\site-packages\resources/aws/database\elasticache.png" shape=none]
+	"7edcb786e9214630857a8dfb43ee0dd9" -> "69f7dd9ad1804670be3e4b1e076a30e2" [dir=forward fontcolor="#2D3436" fontname="Sans-Serif" fontsize=13]
+	"69f7dd9ad1804670be3e4b1e076a30e2" -> c823bad875c54134980a32dc443c20db [dir=forward fontcolor="#2D3436" fontname="Sans-Serif" fontsize=13]
+	"8e395c6b1072496c908b20431f81f7be" -> "7edcb786e9214630857a8dfb43ee0dd9" [dir=forward fontcolor="#2D3436" fontname="Sans-Serif" fontsize=13]
+}

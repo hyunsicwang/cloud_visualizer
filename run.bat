@@ -1,0 +1,3 @@
+@echo off
+echo Starting Cloud Visualizer...
+python -m streamlit run app.py
