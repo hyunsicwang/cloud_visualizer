@@ -141,6 +141,7 @@ def create_projects_table():
     if connection:
         try:
             cursor = connection.cursor()
+            # 테이블 생성
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS project (
                     id SERIAL PRIMARY KEY,
@@ -152,6 +153,16 @@ def create_projects_table():
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            
+            # 시퀀스 재설정 시도
+            try:
+                cursor.execute("SELECT MAX(id) FROM project")
+                max_id = cursor.fetchone()[0]
+                if max_id is not None:
+                    cursor.execute(f"ALTER SEQUENCE project_id_seq RESTART WITH {max_id + 1}")
+            except:
+                pass  # 시퀀스 재설정 실패는 무시
+                
             connection.commit()
         except Error as e:
             st.error(f"테이블 생성 오류: {e}")
@@ -163,11 +174,17 @@ def add_project_to_db(project_name, account_id, region, access_key, secret_key):
     connection = get_db_connection()
     if connection:
         try:
+            # 현재 최대 ID 값 조회
             cursor = connection.cursor()
+            cursor.execute("SELECT MAX(id) FROM project")
+            max_id = cursor.fetchone()[0]
+            next_id = 1 if max_id is None else max_id + 1
+            
+            # 새 ID로 프로젝트 추가
             cursor.execute("""
-                INSERT INTO project (project_name, account_id, region, access_key, secret_key)
-                VALUES (%s, %s, %s, %s, %s)
-            """, (project_name, account_id, region, access_key, secret_key))
+                INSERT INTO project (id, project_name, account_id, region, access_key, secret_key)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (next_id, project_name, account_id, region, access_key, secret_key))
             connection.commit()
             return True
         except Error as e:
