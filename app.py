@@ -1,10 +1,10 @@
 import streamlit as st
 from config.database import create_projects_table
-from pages.dashboard import dashboard_page
-from pages.projects import project_page
-from pages.inventory import inventory_page
-from pages.workload import workload_page
-from pages.diagram import diagram_page
+from components.dashboard import dashboard_page
+from components.projects import project_page
+from components.inventory import inventory_page
+from components.workload import workload_page
+from components.diagram import diagram_page
 
 # 페이지 설정
 st.set_page_config(
@@ -17,6 +17,15 @@ st.set_page_config(
 # CSS 스타일링
 st.markdown("""
 <style>
+/* Streamlit 기본 네비게이션 숨기기 */
+.stAppViewContainer > .main > div[data-testid="stSidebarNav"] {
+    display: none;
+}
+
+/* 상단 메뉴바 숨기기 */
+header[data-testid="stHeader"] {
+    display: none;
+}
 /* 기본 버튼 스타일 */
 .stButton > button {
     width: 100%;
