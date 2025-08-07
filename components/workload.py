@@ -3,7 +3,7 @@ from psycopg2 import Error
 from models.project import get_project_names, get_project_info
 from config.database import get_db_connection
 from utils.aws_session import create_aws_session
-from services.aws_network import get_elb_details
+from services.aws_network import get_elb_details, get_route53_records
 
 # 워크로드 페이지
 def workload_page():
@@ -61,6 +61,7 @@ def workload_page():
                     
                     if session:
                         elb_details = get_elb_details(session)
+                        route53_data = get_route53_records(session)
                         
                         if not elb_details.empty:
                             # ELB 유형별 요약
@@ -94,6 +95,20 @@ def workload_page():
                                     st.dataframe(type_data, use_container_width=True)
                         else:
                             st.info("등록된 Load Balancer가 없습니다.")
+                        
+                        # Route53 정보 표시
+                        st.markdown("---")
+                        st.subheader("Route53 DNS 레코드")
+                        
+                        if not route53_data.empty:
+                            # 영역별로 그룹화
+                            zones = route53_data['Zone'].unique()
+                            for zone in zones:
+                                zone_data = route53_data[route53_data['Zone'] == zone]
+                                st.markdown(f"### {zone}")
+                                st.dataframe(zone_data.drop('Zone', axis=1), use_container_width=True)
+                        else:
+                            st.info("등록된 Route53 레코드가 없습니다.")
                     else:
                         st.error("AWS 세션 생성에 실패했습니다.")
                 else:

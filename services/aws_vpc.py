@@ -98,6 +98,7 @@ def get_vpn_gateways(session):
         ec2 = session.client('ec2')
         response = ec2.describe_vpn_gateways()
         vpn_gws = []
+        print(f"VPN Gateway 조회 결과: {len(response.get('VpnGateways', []))}개 발견")
         for vpn in response['VpnGateways']:
             name = next((tag['Value'] for tag in vpn.get('Tags', []) if tag['Key'] == 'Name'), 'N/A')
             attachments = ', '.join([att['VpcId'] for att in vpn.get('VpcAttachments', [])])
@@ -119,6 +120,7 @@ def get_vpn_connections(session):
         ec2 = session.client('ec2')
         response = ec2.describe_vpn_connections()
         vpn_connections = []
+        print(f"Site-to-Site VPN 조회 결과: {len(response.get('VpnConnections', []))}개 발견")
         for vpn in response['VpnConnections']:
             name = next((tag['Value'] for tag in vpn.get('Tags', []) if tag['Key'] == 'Name'), 'N/A')
             

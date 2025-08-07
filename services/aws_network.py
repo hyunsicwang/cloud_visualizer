@@ -167,3 +167,42 @@ def get_cloudfront_distributions(session):
     except Exception as e:
         st.error(f"CloudFront 조회 오류: {e}")
         return pd.DataFrame()
+
+# Route53 레코드 조회
+def get_route53_records(session):
+    try:
+        route53 = session.client('route53')
+        hosted_zones = route53.list_hosted_zones()['HostedZones']
+        records = []
+        
+        for zone in hosted_zones:
+            zone_id = zone['Id']
+            zone_name = zone['Name'].rstrip('.')
+            
+            try:
+                record_sets = route53.list_resource_record_sets(HostedZoneId=zone_id)['ResourceRecordSets']
+                for record in record_sets:
+                    record_name = record['Name'].rstrip('.')
+                    record_type = record['Type']
+                    
+                    # 값 추출
+                    values = []
+                    if 'ResourceRecords' in record:
+                        values = [rr['Value'] for rr in record['ResourceRecords']]
+                    elif 'AliasTarget' in record:
+                        values = [record['AliasTarget']['DNSName']]
+                    
+                    records.append({
+                        'Zone': zone_name,
+                        'Record Name': record_name,
+                        'Type': record_type,
+                        'Value': ', '.join(values),
+                        'TTL': record.get('TTL', 'Alias' if 'AliasTarget' in record else 'N/A')
+                    })
+            except Exception as zone_error:
+                continue
+        
+        return pd.DataFrame(records)
+    except Exception as e:
+        st.error(f"Route53 조회 오류: {e}")
+        return pd.DataFrame()
