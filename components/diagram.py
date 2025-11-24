@@ -93,7 +93,7 @@ def diagram_page():
             st.info(f"선택된 프로젝트: **{selected_project}**")
             
             # 프로젝트 선택 시 전체 AWS 리소스 조회 및 구성도 생성
-            with st.spinner(f"{selected_project} 프로젝트의 전체 AWS 리소스를 조회하고 있습니다..."):
+            with st.spinner(f"{selected_project} 프로젝트의 AWS 구성도를 생성하고 있습니다..."):
                 full_aws_data = get_full_aws_resources(selected_project)
             
             # 구성도그리기 페이지로 데이터 전달
@@ -101,7 +101,7 @@ def diagram_page():
             st.session_state.diagram_data = full_aws_data
             
             # Draw.io XML 구성도 생성
-            with st.spinner("구성도를 생성하고 있습니다..."):
+            with st.spinner(f"{selected_project} 프로젝트의 AWS 구성도를 생성하고 있습니다..."):
                 xml_content = generate_aws_drawio_xml(selected_project, full_aws_data)
                 
                 if xml_content:

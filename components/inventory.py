@@ -191,14 +191,10 @@ def inventory_page():
             expiring_types = list(set(expiring_items))
             expiry_text = ' 또는 '.join(expiring_types)
             
-            @st.dialog("⚠️ 만료 알림")
-            def show_expiry_warning():
-                st.warning(f"**[만료알림]** {expiry_text}가 만료 예정이니, 확인 해주세요!!!")
-                if st.button("확인 하겠습니다", type="primary", use_container_width=True):
-                    st.session_state[warning_key] = True
-                    st.rerun()
-            
-            show_expiry_warning()
+            st.error(f"⚠️ **[만료알림]** {expiry_text}가 만료 예정이니, 확인 해주세요!!!")
+            if st.button("✅ 확인 완료", key=f"expiry_confirm_{selected_project}"):
+                st.session_state[warning_key] = True
+                st.rerun()
     else:
         # 프로젝트 선택 안내
         st.info("프로젝트를 선택하여 AWS 리소스를 조회하세요.")

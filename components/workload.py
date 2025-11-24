@@ -92,6 +92,31 @@ def workload_page():
                                                 'classic': 'CLB (Classic Load Balancer)'}[elb_type]
                                     
                                     st.markdown(f"### {type_name}")
+                                    
+                                    # 각 ELB별로 상세 정보 표시
+                                    for _, elb_row in type_data.iterrows():
+                                        with st.expander(f"🔍 {elb_row['ELB Name']} 상세 정보", expanded=True):
+                                            col1, col2 = st.columns(2)
+                                            
+                                            with col1:
+                                                st.write(f"**타입**: {elb_row['Type'].upper()}")
+                                                st.write(f"**스킴**: {elb_row['Scheme']}")
+                                                st.write(f"**리스너**: {elb_row['Listeners']}")
+                                            
+                                            with col2:
+                                                st.write(f"**대상그룹**: {elb_row['Target Groups']}")
+                                            
+                                            # EC2 인스턴스 정보를 별도로 표시
+                                            st.write("**연결된 EC2 인스턴스**:")
+                                            if elb_row['EC2 Instances'] != 'No EC2 Instances':
+                                                ec2_list = elb_row['EC2 Instances'].split(', ')
+                                                for i, ec2 in enumerate(ec2_list, 1):
+                                                    st.write(f"  {i}. {ec2}")
+                                            else:
+                                                st.write("  연결된 EC2 인스턴스가 없습니다.")
+                                    
+                                    # 전체 테이블도 표시
+                                    st.markdown("#### 전체 목록")
                                     st.dataframe(type_data, use_container_width=True)
                         else:
                             st.info("등록된 Load Balancer가 없습니다.")
