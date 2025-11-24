@@ -1,9 +1,163 @@
 import streamlit as st
+import pandas as pd
 from psycopg2 import Error
 from models.project import get_project_names, get_project_info
 from config.database import get_db_connection
 from utils.aws_session import create_aws_session
 from services.aws_network import get_elb_details, get_route53_records
+
+# 리스너별, 대상그룹별 상세 ELB 정보 조회
+def get_detailed_elb_info(session):
+    try:
+        elb = session.client('elbv2')
+        elb_classic = session.client('elb')
+        detailed_rows = []
+        
+        # ALB/NLB 조회
+        try:
+            response = elb.describe_load_balancers()
+            for lb in response['LoadBalancers']:
+                lb_arn = lb['LoadBalancerArn']
+                lb_name = lb['LoadBalancerName']
+                lb_type = lb['Type']
+                lb_scheme = lb['Scheme']
+                
+                # 리스너 조회
+                try:
+                    listeners = elb.describe_listeners(LoadBalancerArn=lb_arn)['Listeners']
+                    for listener in listeners:
+                        listener_port = listener['Port']
+                        listener_protocol = listener['Protocol']
+                        
+                        # 대상 그룹 조회
+                        target_groups_found = False
+                        for action in listener.get('DefaultActions', []):
+                            if action['Type'] == 'forward':
+                                target_groups = []
+                                if 'TargetGroupArn' in action:
+                                    target_groups.append(action['TargetGroupArn'])
+                                elif 'ForwardConfig' in action and action['ForwardConfig'].get('TargetGroups'):
+                                    target_groups = [tg['TargetGroupArn'] for tg in action['ForwardConfig']['TargetGroups']]
+                                
+                                if target_groups:
+                                    target_groups_found = True
+                                    for tg_arn in target_groups:
+                                        try:
+                                            # 대상 그룹 상세 정보
+                                            tg_info = elb.describe_target_groups(TargetGroupArns=[tg_arn])['TargetGroups'][0]
+                                            tg_name = tg_info['TargetGroupName']
+                                            
+                                            # 대상 상태 확인 및 EC2 인스턴스 정보 수집
+                                            ec2_instances = []
+                                            target_health = elb.describe_target_health(TargetGroupArn=tg_arn)
+                                            ec2_client = session.client('ec2')
+                                            
+                                            for target in target_health['TargetHealthDescriptions']:
+                                                target_id = target['Target']['Id']
+                                                if target_id.startswith('i-'):
+                                                    instance_id = target_id
+                                                    try:
+                                                        ec2_response = ec2_client.describe_instances(InstanceIds=[instance_id])
+                                                        for reservation in ec2_response['Reservations']:
+                                                            for instance in reservation['Instances']:
+                                                                instance_name = next((tag['Value'] for tag in instance.get('Tags', []) if tag['Key'] == 'Name'), 'N/A')
+                                                                private_ip = instance.get('PrivateIpAddress', 'N/A')
+                                                                ec2_instances.append(f"{instance_name} ({instance_id}, {private_ip})")
+                                                    except:
+                                                        ec2_instances.append(f"Unknown ({instance_id})")
+                                                else:
+                                                    # IP 대상인 경우
+                                                    ec2_instances.append(f"IP Target ({target_id})")
+                                            
+                                            detailed_rows.append({
+                                                'ELB Name': lb_name,
+                                                'Type': lb_type.upper(),
+                                                'Scheme': lb_scheme,
+                                                'Listener': f"{listener_protocol}:{listener_port}",
+                                                'Target Group': tg_name,
+                                                'EC2 Instances': ', '.join(ec2_instances) if ec2_instances else 'No Targets'
+                                            })
+                                        except Exception as tg_error:
+                                            detailed_rows.append({
+                                                'ELB Name': lb_name,
+                                                'Type': lb_type.upper(),
+                                                'Scheme': lb_scheme,
+                                                'Listener': f"{listener_protocol}:{listener_port}",
+                                                'Target Group': 'Error',
+                                                'EC2 Instances': 'Error'
+                                            })
+                        
+                        # 대상그룹이 없는 리스너의 경우 (NLB 등)
+                        if not target_groups_found:
+                            detailed_rows.append({
+                                'ELB Name': lb_name,
+                                'Type': lb_type.upper(),
+                                'Scheme': lb_scheme,
+                                'Listener': f"{listener_protocol}:{listener_port}",
+                                'Target Group': 'No Target Group',
+                                'EC2 Instances': 'N/A'
+                            })
+                except Exception as listener_error:
+                    detailed_rows.append({
+                        'ELB Name': lb_name,
+                        'Type': lb_type.upper(),
+                        'Scheme': lb_scheme,
+                        'Listener': 'N/A',
+                        'Target Group': 'N/A',
+                        'EC2 Instances': 'N/A'
+                    })
+        except Exception as alb_error:
+            pass
+        
+        # CLB 조회
+        try:
+            classic_response = elb_classic.describe_load_balancers()
+            for clb in classic_response['LoadBalancerDescriptions']:
+                clb_name = clb['LoadBalancerName']
+                clb_scheme = clb['Scheme']
+                
+                # 리스너 정보 수집
+                for listener in clb['ListenerDescriptions']:
+                    listener_info = listener['Listener']
+                    protocol = listener_info['Protocol']
+                    port = listener_info['LoadBalancerPort']
+                    
+                    # CLB에 연결된 EC2 인스턴스 정보
+                    ec2_instances = []
+                    try:
+                        instance_health = elb_classic.describe_instance_health(LoadBalancerName=clb_name)
+                        ec2_client = session.client('ec2')
+                        
+                        for instance_state in instance_health['InstanceStates']:
+                            instance_id = instance_state['InstanceId']
+                            try:
+                                ec2_response = ec2_client.describe_instances(InstanceIds=[instance_id])
+                                for reservation in ec2_response['Reservations']:
+                                    for instance in reservation['Instances']:
+                                        instance_name = next((tag['Value'] for tag in instance.get('Tags', []) if tag['Key'] == 'Name'), 'N/A')
+                                        private_ip = instance.get('PrivateIpAddress', 'N/A')
+                                        ec2_instances.append(f"{instance_name} ({instance_id}, {private_ip})")
+                            except:
+                                ec2_instances.append(f"Unknown ({instance_id})")
+                    except:
+                        pass
+                    
+                    detailed_rows.append({
+                        'ELB Name': clb_name,
+                        'Type': 'CLB',
+                        'Scheme': clb_scheme,
+                        'Listener': f"{protocol}:{port}",
+                        'Target Group': 'Direct Instance',
+                        'EC2 Instances': ', '.join(ec2_instances) if ec2_instances else 'No EC2 Instances'
+                    })
+        except Exception as clb_error:
+            pass
+        
+        return pd.DataFrame(detailed_rows)
+        
+    except Exception as e:
+        st.error(f"ELB 상세 정보 조회 오류: {e}")
+        return pd.DataFrame()
 
 # 워크로드 페이지
 def workload_page():
@@ -60,64 +214,15 @@ def workload_page():
                     )
                     
                     if session:
-                        elb_details = get_elb_details(session)
+                        # 리스너별, 대상그룹별 상세 데이터 생성
+                        detailed_data = get_detailed_elb_info(session)
                         route53_data = get_route53_records(session)
                         
-                        if not elb_details.empty:
-                            # ELB 유형별 요약
-                            clb_count = len(elb_details[elb_details['Type'] == 'classic'])
-                            alb_count = len(elb_details[elb_details['Type'] == 'application'])
-                            nlb_count = len(elb_details[elb_details['Type'] == 'network'])
+                        if not detailed_data.empty:
                             
-                            # 요약 카드
-                            col1, col2, col3 = st.columns(3)
-                            with col1:
-                                st.metric("CLB (Classic)", clb_count)
-                            with col2:
-                                st.metric("ALB (Application)", alb_count)
-                            with col3:
-                                st.metric("NLB (Network)", nlb_count)
-                            
-                            st.markdown("---")
-                            
-                            # ELB 목록 및 상세 정보
+                            # Load Balancer 상세 정보
                             st.subheader("Load Balancer 상세 정보")
-                            
-                            # 유형별로 그룹화
-                            for elb_type in ['application', 'network', 'classic']:
-                                type_data = elb_details[elb_details['Type'] == elb_type]
-                                if not type_data.empty:
-                                    type_name = {'application': 'ALB (Application Load Balancer)', 
-                                                'network': 'NLB (Network Load Balancer)',
-                                                'classic': 'CLB (Classic Load Balancer)'}[elb_type]
-                                    
-                                    st.markdown(f"### {type_name}")
-                                    
-                                    # 각 ELB별로 상세 정보 표시
-                                    for _, elb_row in type_data.iterrows():
-                                        with st.expander(f"🔍 {elb_row['ELB Name']} 상세 정보", expanded=True):
-                                            col1, col2 = st.columns(2)
-                                            
-                                            with col1:
-                                                st.write(f"**타입**: {elb_row['Type'].upper()}")
-                                                st.write(f"**스킴**: {elb_row['Scheme']}")
-                                                st.write(f"**리스너**: {elb_row['Listeners']}")
-                                            
-                                            with col2:
-                                                st.write(f"**대상그룹**: {elb_row['Target Groups']}")
-                                            
-                                            # EC2 인스턴스 정보를 별도로 표시
-                                            st.write("**연결된 EC2 인스턴스**:")
-                                            if elb_row['EC2 Instances'] != 'No EC2 Instances':
-                                                ec2_list = elb_row['EC2 Instances'].split(', ')
-                                                for i, ec2 in enumerate(ec2_list, 1):
-                                                    st.write(f"  {i}. {ec2}")
-                                            else:
-                                                st.write("  연결된 EC2 인스턴스가 없습니다.")
-                                    
-                                    # 전체 테이블도 표시
-                                    st.markdown("#### 전체 목록")
-                                    st.dataframe(type_data, use_container_width=True)
+                            st.dataframe(detailed_data, use_container_width=True)
                         else:
                             st.info("등록된 Load Balancer가 없습니다.")
                         

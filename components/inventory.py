@@ -151,7 +151,77 @@ def inventory_page():
         for svc_name, df in aws_data.items():
             if not df.empty:
                 st.subheader(f"{svc_name} ({len(df)}개)")
-                if svc_name in ['ACM', 'EC2 RI', 'RDS RI'] and ('만료기간' in df.columns or '만료일시' in df.columns):
+                
+                # EC2 RI 약정 상태 처리
+                if svc_name == 'EC2':
+                    # RI 정보 가져오기
+                    active_ri_types = set()
+                    if 'EC2 RI' in aws_data and not aws_data['EC2 RI'].empty:
+                        for _, ri in aws_data['EC2 RI'].iterrows():
+                            if ri.get('State') == 'active':
+                                active_ri_types.add(ri.get('Instance Type'))
+                    
+                    # RI 컴럼 추가
+                    df_with_ri = df.copy()
+                    df_with_ri['RI'] = df_with_ri['Type'].apply(
+                        lambda x: 'RI 약정중' if x in active_ri_types else ''
+                    )
+                    
+                    # RI 약정중인 EC2 파란색으로 표시
+                    def highlight_ri_instances(row):
+                        if row['RI'] == 'RI 약정중':
+                            return ['color: blue'] * len(row)
+                        return [''] * len(row)
+                    
+                    styled_df = df_with_ri.style.apply(highlight_ri_instances, axis=1)
+                    st.dataframe(styled_df, use_container_width=True)
+                
+                # RDS RI 약정 상태 처리
+                elif svc_name == 'RDS':
+                    # RDS RI 정보 가져오기 (타입별 수량 계산)
+                    ri_counts = {}
+                    if 'RDS RI' in aws_data and not aws_data['RDS RI'].empty:
+                        for _, ri in aws_data['RDS RI'].iterrows():
+                            if ri.get('State') == 'active':
+                                db_class = ri.get('DB Instance Class')
+                                instance_count = ri.get('Instance Count', 1)
+                                ri_counts[db_class] = ri_counts.get(db_class, 0) + instance_count
+                    
+                    # 실제 인스턴스 수량 계산
+                    instance_counts = df['Class'].value_counts().to_dict()
+                    
+                    # RI 컴럼 추가
+                    df_with_ri = df.copy()
+                    ri_status_tracker = {}
+                    
+                    def get_ri_status(db_class):
+                        if db_class not in ri_counts:
+                            return ''
+                        
+                        if db_class not in ri_status_tracker:
+                            ri_status_tracker[db_class] = 0
+                        
+                        ri_status_tracker[db_class] += 1
+                        
+                        if ri_status_tracker[db_class] <= ri_counts[db_class]:
+                            return 'RI 약정중'
+                        else:
+                            return 'RI 확인필요'
+                    
+                    df_with_ri['RI'] = df_with_ri['Class'].apply(get_ri_status)
+                    
+                    # RI 상태에 따른 색상 표시
+                    def highlight_rds_ri_instances(row):
+                        if row['RI'] == 'RI 약정중':
+                            return ['color: blue'] * len(row)
+                        elif row['RI'] == 'RI 확인필요':
+                            return ['color: orange'] * len(row)
+                        return [''] * len(row)
+                    
+                    styled_df = df_with_ri.style.apply(highlight_rds_ri_instances, axis=1)
+                    st.dataframe(styled_df, use_container_width=True)
+                
+                elif svc_name in ['ACM', 'EC2 RI', 'RDS RI'] and ('만료기간' in df.columns or '만료일시' in df.columns):
                     # 만료기간/만료일시 체크 및 색상 표시
                     def highlight_expiring_items(row):
                         try:
