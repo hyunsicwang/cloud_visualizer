@@ -1,23 +1,28 @@
 import streamlit as st
 import urllib.parse
+import base64
 from datetime import datetime
 
 # Draw.io XML을 iframe에 로드하는 함수
 def load_drawio_with_xml(xml_content):
     if xml_content:
-        # XML을 URL 인코딩
-        encoded_xml = urllib.parse.quote(xml_content)
-        
-        # Draw.io iframe에 XML 데이터 로드
-        iframe_html = f"""
-        <iframe
-        src="https://embed.diagrams.net/?embed=1&ui=atlas&proto=json&xml={encoded_xml}"
-        width="100%"
-        height="800"
-        frameborder="0">
-        </iframe>
-        """
-        return iframe_html
+        try:
+            # XML을 Base64로 인코딩
+            xml_bytes = xml_content.encode('utf-8')
+            encoded_xml = base64.b64encode(xml_bytes).decode('utf-8')
+            
+            # Draw.io iframe에 Base64 인코딩된 XML 데이터 로드
+            iframe_html = f"""
+            <iframe
+            src="https://embed.diagrams.net/?embed=1&ui=atlas&spin=1&modified=unsavedChanges&proto=json#data=data:application/xml;base64,{encoded_xml}"
+            width="100%"
+            height="800"
+            frameborder="0">
+            </iframe>
+            """
+            return iframe_html
+        except Exception as e:
+            return f"<p>구성도 로드 오류: {e}</p>"
     else:
         return "<p>구성도를 생성할 수 없습니다.</p>"
 
