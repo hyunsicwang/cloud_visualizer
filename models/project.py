@@ -2,30 +2,26 @@ import streamlit as st
 from psycopg2 import Error
 from config.database import get_db_connection
 
-# 프로젝트 추가
+# 프로젝트 추가 (프로젝트 ID 반환)
 def add_project_to_db(project_name, account_id, region, access_key, secret_key):
     connection = get_db_connection()
     if connection:
         try:
-            # 현재 최대 ID 값 조회
             cursor = connection.cursor()
-            cursor.execute("SELECT MAX(id) FROM project")
-            max_id = cursor.fetchone()[0]
-            next_id = 1 if max_id is None else max_id + 1
-            
-            # 새 ID로 프로젝트 추가
+            # SERIAL 타입을 사용하여 자동 증가하는 ID 생성
             cursor.execute("""
-                INSERT INTO project (id, project_name, account_id, region, access_key, secret_key)
-                VALUES (%s, %s, %s, %s, %s, %s)
-            """, (next_id, project_name, account_id, region, access_key, secret_key))
+                INSERT INTO project (project_name, account_id, region, access_key, secret_key)
+                VALUES (%s, %s, %s, %s, %s) RETURNING id
+            """, (project_name, account_id, region, access_key, secret_key))
+            project_id = cursor.fetchone()[0]
             connection.commit()
-            return True
+            return project_id
         except Error as e:
             st.error(f"프로젝트 추가 오류: {e}")
-            return False
+            return None
         finally:
             connection.close()
-    return False
+    return None
 
 # 프로젝트 목록 조회
 def get_projects_from_db():

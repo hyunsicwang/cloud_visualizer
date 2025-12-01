@@ -1,11 +1,81 @@
 import streamlit as st
-from config.database import create_projects_table
+from config.database import create_projects_table, create_member_table, authenticate_user, create_user
 from components.dashboard import dashboard_page
 from components.projects import project_page
 from components.inventory import inventory_page
 from components.workload import workload_page
 from components.diagram import diagram_page
 from components.security import security_page
+from components.admin import admin_page
+
+# 로그인 페이지
+def login_page():
+    # 상단 여백
+    st.markdown("<div style='height: 100px;'></div>", unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    
+    with col2:
+        tab1, tab2 = st.tabs(["로그인", "회원가입"])
+        
+        with tab1:
+            with st.form("로그인_폼"):
+                user_id = st.text_input("아이디")
+                password = st.text_input("비밀번호", type="password")
+                login_btn = st.form_submit_button("로그인", use_container_width=True)
+                
+                if login_btn:
+                    if user_id and password:
+                        user = authenticate_user(user_id, password)
+                        if user:
+                            st.session_state.logged_in = True
+                            st.session_state.user_id = user['id']
+                            st.session_state.permission = user['permission']
+                            st.session_state.user_projects = user['projects']
+                            st.success("로그인 성공!")
+                            st.rerun()
+                        else:
+                            st.error("아이디 또는 비밀번호가 잘못되었습니다.")
+                    else:
+                        st.error("아이디와 비밀번호를 입력해주세요.")
+        
+        with tab2:
+            with st.form("회원가입_폼"):
+                new_user_id = st.text_input("새 아이디")
+                new_password = st.text_input("새 비밀번호", type="password")
+                signup_btn = st.form_submit_button("회원가입", use_container_width=True)
+                
+                if signup_btn:
+                    if new_user_id and new_password:
+                        if create_user(new_user_id, new_password):
+                            st.success("회원가입이 완료되었습니다. 로그인해주세요.")
+                        # 오류는 create_user 함수에서 처리
+                    else:
+                        st.error("아이디와 비밀번호를 입력해주세요.")
+    
+    # 하단에 Cloud Visualizer 아이콘 및 설명
+    st.markdown("<div style='height: 80px;'></div>", unsafe_allow_html=True)
+    
+    st.markdown(
+        """
+        <div style="
+            text-align: center;
+            padding: 40px;
+        ">
+            <h1 style="
+                color: #333; 
+                margin-bottom: 10px;
+                font-size: 48px;
+            ">☁️ Cloud Visualizer</h1>
+            <p style="
+                color: #666; 
+                font-size: 18px;
+                margin: 0;
+            ">AWS 클라우드 관리 시스템</p>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
 # 페이지 설정
 st.set_page_config(
@@ -77,7 +147,7 @@ header[data-testid="stHeader"] {
 
 # 사이드바 메뉴
 st.sidebar.markdown(
-    """
+    f"""
     <h1 style="
         font-size: 32px;
         font-weight: bold;
@@ -88,9 +158,16 @@ st.sidebar.markdown(
     ">
         ☁️ Cloud Visualizer
     </h1>
+    <p style="text-align: center; color: #666; margin: 5px 0;">환영합니다, {st.session_state.get('user_id', '')}님!</p>
     """,
     unsafe_allow_html=True
 )
+
+# 로그아웃 버튼
+if st.sidebar.button("🚪 로그아웃", use_container_width=True):
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+    st.rerun()
 st.sidebar.markdown(
     """
     <div style="
@@ -116,6 +193,11 @@ st.sidebar.markdown(
 )
 st.sidebar.markdown("---")
 
+# 로그인 체크
+if 'logged_in' not in st.session_state or not st.session_state.logged_in:
+    login_page()
+    st.stop()
+
 # 세션 상태 초기화
 if 'current_page' not in st.session_state:
     st.session_state.current_page = "대시보드"
@@ -129,6 +211,10 @@ menus = [
     ("구성도", "🗺️ 구성도", "diagram_btn"),
     ("보안점검", "🔒 보안점검", "security_btn")
 ]
+
+# admin 계정일 때 관리자 메뉴 추가
+if st.session_state.get('permission') == 'admin':
+    menus.append(("관리자 페이지", "👨💼 관리자 페이지", "admin_btn"))
 
 for page_name, button_text, button_key in menus:
     if st.session_state.current_page == page_name:
@@ -168,6 +254,7 @@ menu = st.session_state.current_page
 
 # 앱 시작 시 테이블 생성
 create_projects_table()
+create_member_table()
 
 # 메뉴에 따른 페이지 렌더링
 if menu == "대시보드":
@@ -182,6 +269,8 @@ elif menu == "구성도":
     diagram_page()
 elif menu == "보안점검":
     security_page()
+elif menu == "관리자 페이지":
+    admin_page()
 
 # 푸터
 st.sidebar.markdown("---")

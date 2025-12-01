@@ -1,8 +1,22 @@
 import streamlit as st
 import pandas as pd
-from models.project import get_project_names, get_project_info
+from models.project import get_project_names, get_project_info, get_projects_from_db
 from config.database import get_all_security_scores
 from utils.aws_session import create_aws_session
+
+def filter_project_names_by_permission(project_names):
+    """사용자 권한에 따라 프로젝트명 필터링"""
+    user_projects = st.session_state.get('user_projects', '')
+    if user_projects == 'all':
+        return project_names
+    elif not user_projects:
+        return []
+    else:
+        # 프로젝트 ID로 프로젝트명 필터링
+        allowed_ids = [int(pid) for pid in user_projects.split(',') if pid.strip()]
+        all_projects = get_projects_from_db()
+        allowed_project_names = [p['project_name'] for p in all_projects if p['id'] in allowed_ids]
+        return [name for name in project_names if name in allowed_project_names]
 
 # 프로젝트별 서비스 현황 조회
 def get_project_services_count(project_name):
@@ -63,7 +77,9 @@ def dashboard_page():
     # 프로젝트별 서비스 현황
     st.subheader("🏗️ 프로젝트별 서비스 현황")
     
-    project_names = get_project_names()
+    all_project_names = get_project_names()
+    project_names = filter_project_names_by_permission(all_project_names)
+    
     if project_names:
         project_services_list = []
         
@@ -106,7 +122,10 @@ def dashboard_page():
                 total_elb = sum(p['ELB'] for p in project_services_list)
                 st.metric("전체 ELB", total_elb)
     else:
-        st.info("등록된 프로젝트가 없습니다. 프로젝트를 먼저 추가해주세요.")
+        if not all_project_names:
+            st.info("등록된 프로젝트가 없습니다. 프로젝트를 먼저 추가해주세요.")
+        else:
+            st.info("접근 가능한 프로젝트가 없습니다. 관리자에게 문의하세요.")
     
     st.markdown("---")
     
@@ -114,8 +133,20 @@ def dashboard_page():
     st.markdown("---")
     st.subheader("🔒 보안상태 현황")
     
-    # DB에서 보안점수 조회
-    security_data = get_all_security_scores()
+    # DB에서 보안점수 조회 및 권한 필터링
+    all_security_data = get_all_security_scores()
+    user_projects = st.session_state.get('user_projects', '')
+    
+    if user_projects == 'all':
+        security_data = all_security_data
+    elif user_projects:
+        # 프로젝트 ID로 필터링
+        allowed_ids = [int(pid) for pid in user_projects.split(',') if pid.strip()]
+        all_projects = get_projects_from_db()
+        allowed_project_names = [p['project_name'] for p in all_projects if p['id'] in allowed_ids]
+        security_data = [data for data in all_security_data if data['project'] in allowed_project_names]
+    else:
+        security_data = []
     
     if security_data:
         # 보안점수별로 정렬 (높은 점수부터)

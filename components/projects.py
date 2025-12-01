@@ -3,6 +3,18 @@ from models.project import (
     add_project_to_db, get_projects_from_db, update_project_in_db,
     get_project_original_info, delete_project_from_db
 )
+from config.database import update_user_projects
+
+def filter_projects_by_permission(projects):
+    """사용자 권한에 따라 프로젝트 필터링"""
+    user_projects = st.session_state.get('user_projects', '')
+    if user_projects == 'all':
+        return projects
+    elif not user_projects:
+        return []
+    else:
+        allowed_ids = [int(pid) for pid in user_projects.split(',') if pid.strip()]
+        return [p for p in projects if p['id'] in allowed_ids]
 
 # 프로젝트 페이지
 def project_page():
@@ -51,7 +63,21 @@ def project_page():
                 
                 if submitted:
                     if project_name and account_id and region and access_key and secret_key:
-                        if add_project_to_db(project_name, account_id, region, access_key, secret_key):
+                        project_id = add_project_to_db(project_name, account_id, region, access_key, secret_key)
+                        if project_id:
+                            # 사용자 권한 업데이트 (admin이 아닌 경우)
+                            if st.session_state.get('permission') != 'admin':
+                                update_user_projects(st.session_state.get('user_id'), project_id)
+                                # 세션 상태 업데이트
+                                current_projects = st.session_state.get('user_projects', '')
+                                if current_projects and current_projects != 'all':
+                                    projects_list = current_projects.split(',')
+                                    if str(project_id) not in projects_list:
+                                        projects_list.append(str(project_id))
+                                        st.session_state.user_projects = ','.join(projects_list)
+                                else:
+                                    st.session_state.user_projects = str(project_id)
+                            
                             st.session_state.show_add_modal = False
                             st.success(f"프로젝트 '{project_name}'이(가) 추가되었습니다!")
                             st.rerun()
@@ -105,10 +131,14 @@ def project_page():
     
     # 프로젝트 목록
     st.markdown("### 프로젝트 목록")
-    projects = get_projects_from_db()
+    all_projects = get_projects_from_db()
+    projects = filter_projects_by_permission(all_projects)
     
     if not projects:
-        st.info("등록된 프로젝트가 없습니다. 새 프로젝트를 추가해주세요.")
+        if not all_projects:
+            st.info("등록된 프로젝트가 없습니다. 새 프로젝트를 추가해주세요.")
+        else:
+            st.info("접근 가능한 프로젝트가 없습니다. 관리자에게 문의하세요.")
     else:
         for project in projects:
             with st.expander(f"{project['project_name']} - {project['region']}"):

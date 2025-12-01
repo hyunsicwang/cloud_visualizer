@@ -1,7 +1,20 @@
 import streamlit as st
 import pandas as pd
-from models.project import get_project_names, get_project_info
+from models.project import get_project_names, get_project_info, get_projects_from_db
 from utils.aws_session import create_aws_session
+
+def filter_project_names_by_permission(project_names):
+    """사용자 권한에 따라 프로젝트명 필터링"""
+    user_projects = st.session_state.get('user_projects', '')
+    if user_projects == 'all':
+        return project_names
+    elif not user_projects:
+        return []
+    else:
+        allowed_ids = [int(pid) for pid in user_projects.split(',') if pid.strip()]
+        all_projects = get_projects_from_db()
+        allowed_project_names = [p['project_name'] for p in all_projects if p['id'] in allowed_ids]
+        return [name for name in project_names if name in allowed_project_names]
 from config.database import update_security_score
 from services.aws_security_check import (
     check_s3_public_access, check_sg_open_to_world, check_iam_mfa,
@@ -21,7 +34,9 @@ def security_page():
             st.rerun()
     
     # 프로젝트 선택
-    project_names = get_project_names()
+    all_project_names = get_project_names()
+    project_names = filter_project_names_by_permission(all_project_names)
+    
     if project_names:
         default_index = 0
         if 'selected_project' in st.session_state and st.session_state.selected_project:
@@ -171,4 +186,7 @@ def security_page():
         else:
             st.info("프로젝트를 선택하여 보안점검을 수행하세요.")
     else:
-        st.warning("등록된 프로젝트가 없습니다. 프로젝트를 먼저 추가해주세요.")
+        if not all_project_names:
+            st.warning("등록된 프로젝트가 없습니다. 프로젝트를 먼저 추가해주세요.")
+        else:
+            st.warning("접근 가능한 프로젝트가 없습니다. 관리자에게 문의하세요.")

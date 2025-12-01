@@ -105,3 +105,121 @@ def get_all_security_scores():
         finally:
             connection.close()
     return security_scores
+
+# 멤버 테이블 생성
+def create_member_table():
+    connection = get_db_connection()
+    if connection:
+        try:
+            cursor = connection.cursor()
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS member (
+                    id VARCHAR(255) PRIMARY KEY,
+                    pw VARCHAR(255) NOT NULL,
+                    permission VARCHAR(50) DEFAULT 'user',
+                    projects TEXT DEFAULT '',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # admin 계정 생성 (이미 존재하면 무시)
+            cursor.execute("""
+                INSERT INTO member (id, pw, permission, projects)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (id) DO NOTHING
+            """, ('admin', 'Woongjin!2025', 'admin', 'all'))
+            
+            connection.commit()
+        except Error as e:
+            st.error(f"멤버 테이블 생성 오류: {e}")
+        finally:
+            connection.close()
+
+# 사용자 인증
+def authenticate_user(user_id, password):
+    connection = get_db_connection()
+    if connection:
+        try:
+            cursor = connection.cursor()
+            cursor.execute("SELECT id, permission, projects FROM member WHERE id = %s AND pw = %s", (user_id, password))
+            result = cursor.fetchone()
+            if result:
+                return {'id': result[0], 'permission': result[1], 'projects': result[2]}
+        except Error as e:
+            st.error(f"사용자 인증 오류: {e}")
+        finally:
+            connection.close()
+    return None
+
+# 사용자가 접근 가능한 프로젝트 ID 목록 조회
+def get_user_project_ids(user_id):
+    connection = get_db_connection()
+    if connection:
+        try:
+            cursor = connection.cursor()
+            cursor.execute("SELECT projects FROM member WHERE id = %s", (user_id,))
+            result = cursor.fetchone()
+            if result and result[0]:
+                projects = result[0]
+                if projects == 'all':
+                    return 'all'
+                else:
+                    return [int(pid) for pid in projects.split(',') if pid.strip()]
+            return []
+        except Error as e:
+            st.error(f"사용자 프로젝트 조회 오류: {e}")
+        finally:
+            connection.close()
+    return []
+
+# 사용자 생성
+def create_user(user_id, password):
+    connection = get_db_connection()
+    if connection:
+        try:
+            cursor = connection.cursor()
+            cursor.execute("""
+                INSERT INTO member (id, pw, permission, projects)
+                VALUES (%s, %s, 'user', '')
+            """, (user_id, password))
+            connection.commit()
+            return True
+        except Error as e:
+            if "duplicate key" in str(e).lower():
+                st.error("이미 존재하는 아이디입니다.")
+            else:
+                st.error(f"사용자 생성 오류: {e}")
+            return False
+        finally:
+            connection.close()
+    return False
+
+# 사용자 프로젝트 권한 업데이트
+def update_user_projects(user_id, project_id):
+    connection = get_db_connection()
+    if connection:
+        try:
+            cursor = connection.cursor()
+            # 현재 프로젝트 목록 조회
+            cursor.execute("SELECT projects FROM member WHERE id = %s", (user_id,))
+            result = cursor.fetchone()
+            if result:
+                current_projects = result[0]
+                if current_projects and current_projects != 'all':
+                    projects_list = current_projects.split(',')
+                    if str(project_id) not in projects_list:
+                        projects_list.append(str(project_id))
+                        new_projects = ','.join(projects_list)
+                    else:
+                        new_projects = current_projects
+                else:
+                    new_projects = str(project_id)
+                
+                cursor.execute("UPDATE member SET projects = %s WHERE id = %s", (new_projects, user_id))
+                connection.commit()
+                return True
+        except Error as e:
+            st.error(f"프로젝트 권한 업데이트 오류: {e}")
+        finally:
+            connection.close()
+    return False

@@ -2,8 +2,21 @@ import streamlit as st
 import pandas as pd
 import io
 from datetime import datetime
-from models.project import get_project_names, get_project_info
+from models.project import get_project_names, get_project_info, get_projects_from_db
 from utils.aws_session import create_aws_session
+
+def filter_project_names_by_permission(project_names):
+    """사용자 권한에 따라 프로젝트명 필터링"""
+    user_projects = st.session_state.get('user_projects', '')
+    if user_projects == 'all':
+        return project_names
+    elif not user_projects:
+        return []
+    else:
+        allowed_ids = [int(pid) for pid in user_projects.split(',') if pid.strip()]
+        all_projects = get_projects_from_db()
+        allowed_project_names = [p['project_name'] for p in all_projects if p['id'] in allowed_ids]
+        return [name for name in project_names if name in allowed_project_names]
 from services.aws_ec2 import get_ec2_instances, get_ec2_reserved_instances
 from services.aws_database import get_rds_instances, get_rds_reserved_instances, get_elasticache_clusters
 from services.aws_storage import get_s3_buckets, get_efs_filesystems
@@ -28,7 +41,9 @@ def inventory_page():
             st.rerun()
     
     # 프로젝트 선택
-    project_names = get_project_names()
+    all_project_names = get_project_names()
+    project_names = filter_project_names_by_permission(all_project_names)
+    
     if project_names:
         # 프로젝트에서 인벤토리 버튼을 눌렀을 때 자동 선택
         default_index = 0
@@ -56,7 +71,10 @@ def inventory_page():
             st.session_state.current_inventory_project = selected_project
         
     else:
-        st.warning("등록된 프로젝트가 없습니다. 프로젝트를 먼저 추가해주세요.")
+        if not all_project_names:
+            st.warning("등록된 프로젝트가 없습니다. 프로젝트를 먼저 추가해주세요.")
+        else:
+            st.warning("접근 가능한 프로젝트가 없습니다. 관리자에게 문의하세요.")
         selected_project = None
     
     # AWS 리소스 데이터 가져오기
