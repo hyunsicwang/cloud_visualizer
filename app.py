@@ -5,6 +5,7 @@ from components.projects import project_page
 from components.inventory import inventory_page
 from components.workload import workload_page
 from components.diagram import diagram_page
+from components.security import security_page
 
 # 페이지 설정
 st.set_page_config(
@@ -17,6 +18,13 @@ st.set_page_config(
 # CSS 스타일링
 st.markdown("""
 <style>
+/* 검은색-은색 색상 변화 애니메이션 */
+@keyframes colorShift {
+    0% { color: #000000; }
+    50% { color: #c0c0c0; }
+    100% { color: #000000; }
+}
+
 /* Streamlit 기본 네비게이션 숨기기 */
 .stAppViewContainer > .main > div[data-testid="stSidebarNav"] {
     display: none;
@@ -68,7 +76,44 @@ header[data-testid="stHeader"] {
 """, unsafe_allow_html=True)
 
 # 사이드바 메뉴
-st.sidebar.title("☁️ Cloud Visualizer")
+st.sidebar.markdown(
+    """
+    <h1 style="
+        font-size: 32px;
+        font-weight: bold;
+        text-align: center;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        margin-bottom: 0;
+        animation: colorShift 2s ease-in-out infinite;
+    ">
+        ☁️ Cloud Visualizer
+    </h1>
+    """,
+    unsafe_allow_html=True
+)
+st.sidebar.markdown(
+    """
+    <div style="
+        text-align: center;
+        padding: 10px;
+        margin: 15px 0;
+        background: linear-gradient(135deg, #e3f2fd, #f3e5f5);
+        border-radius: 10px;
+        border-left: 4px solid #2196f3;
+    ">
+        <p style="
+            margin: 0;
+            font-size: 14px;
+            color: #1976d2;
+            font-weight: 500;
+            line-height: 1.4;
+        ">
+            ✨ 신속한 인프라 현황 파악을 위한<br>솔루션
+        </p>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
 st.sidebar.markdown("---")
 
 # 세션 상태 초기화
@@ -81,7 +126,8 @@ menus = [
     ("프로젝트", "📁 프로젝트", "project_btn"),
     ("인벤토리", "📋 인벤토리", "inventory_btn"),
     ("워크로드", "💼 워크로드", "workload_btn"),
-    ("구성도", "🗺️ 구성도", "diagram_btn")
+    ("구성도", "🗺️ 구성도", "diagram_btn"),
+    ("보안점검", "🔒 보안점검", "security_btn")
 ]
 
 for page_name, button_text, button_key in menus:
@@ -134,8 +180,17 @@ elif menu == "워크로드":
     workload_page()
 elif menu == "구성도":
     diagram_page()
+elif menu == "보안점검":
+    security_page()
 
 # 푸터
 st.sidebar.markdown("---")
-st.sidebar.markdown("**Cloud Visualizer v1.0**")
-st.sidebar.markdown("AWS 인프라 관리 도구")
+st.sidebar.markdown(
+    """
+    <div style="text-align: center; color: #666;">
+        <strong>Cloud Visualizer v1.0</strong><br>
+        <small>AWS 인프라 관리 도구</small>
+    </div>
+    """,
+    unsafe_allow_html=True
+)

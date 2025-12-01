@@ -28,7 +28,7 @@ def create_projects_table():
     if connection:
         try:
             cursor = connection.cursor()
-            # 테이블 생성
+            # 프로젝트 테이블 생성
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS project (
                     id SERIAL PRIMARY KEY,
@@ -38,6 +38,16 @@ def create_projects_table():
                     access_key VARCHAR(255) NOT NULL,
                     secret_key VARCHAR(255) NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # 보안점검 테이블 생성
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS security (
+                    id SERIAL PRIMARY KEY,
+                    project_name VARCHAR(255) NOT NULL UNIQUE,
+                    security_point DECIMAL(5,2) NOT NULL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
             
@@ -55,3 +65,43 @@ def create_projects_table():
             st.error(f"테이블 생성 오류: {e}")
         finally:
             connection.close()
+
+# 보안점수 저장/업데이트
+def update_security_score(project_name, security_point):
+    connection = get_db_connection()
+    if connection:
+        try:
+            cursor = connection.cursor()
+            # UPSERT (INSERT ON CONFLICT UPDATE)
+            cursor.execute("""
+                INSERT INTO security (project_name, security_point, updated_at)
+                VALUES (%s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (project_name)
+                DO UPDATE SET 
+                    security_point = EXCLUDED.security_point,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (project_name, security_point))
+            connection.commit()
+            return True
+        except Error as e:
+            st.error(f"보안점수 저장 오류: {e}")
+            return False
+        finally:
+            connection.close()
+    return False
+
+# 모든 프로젝트의 보안점수 조회
+def get_all_security_scores():
+    connection = get_db_connection()
+    security_scores = []
+    if connection:
+        try:
+            cursor = connection.cursor()
+            cursor.execute("SELECT project_name, security_point FROM security ORDER BY security_point DESC")
+            rows = cursor.fetchall()
+            security_scores = [{'project': row[0], 'score': float(row[1])} for row in rows]
+        except Error as e:
+            st.error(f"보안점수 조회 오류: {e}")
+        finally:
+            connection.close()
+    return security_scores

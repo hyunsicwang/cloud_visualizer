@@ -121,7 +121,7 @@ def project_page():
                     st.write(f"**Access Key:** {project['access_key']}")
                     st.write(f"**Secret Key:** {project['secret_key']}")
                 with col3:
-                    col3_1, col3_2, col3_3, col3_4, col3_5 = st.columns(5)
+                    col3_1, col3_2, col3_3, col3_4, col3_5, col3_6 = st.columns(6)
                     with col3_1:
                         if st.button(f"🗺️ 구성도", key=f"diagram_{project['id']}"):
                             st.session_state.selected_project = project['project_name']
@@ -139,11 +139,16 @@ def project_page():
                             st.session_state.current_page = "워크로드"
                             st.rerun()
                     with col3_4:
+                        if st.button(f"🔒 보안점검", key=f"security_{project['id']}"):
+                            st.session_state.selected_project = project['project_name']
+                            st.session_state.current_page = "보안점검"
+                            st.rerun()
+                    with col3_5:
                         if st.button(f"✏️ 수정", key=f"edit_{project['id']}"):
                             st.session_state.show_edit_modal = True
                             st.session_state.edit_project_id = project['id']
                             st.rerun()
-                    with col3_5:
+                    with col3_6:
                         if st.button(f"🗑️ 삭제", key=f"delete_{project['id']}"):
                             if delete_project_from_db(project['id']):
                                 st.success("프로젝트가 삭제되었습니다.")
